@@ -3,9 +3,19 @@ class TTS
 
   attr_reader :client
 
+  SIGNATURE = [
+    'tts',
+    'Walker Griggs',
+    '0.1',
+    'GPL3',
+    'Text to speech with Google API',
+    '',
+    'UTF-8'
+  ]
+
   DEFAULT_OPTIONS = {
     :channels       => nil,
-    :ignore_nicks   => 'weechat',
+    :ignore_nicks   => ['weechat'],
     :ignore_tags    => 'irc_quit',
   }
 
@@ -17,10 +27,7 @@ class TTS
         Weechat.config_set_plugin( option.to_s, value.to_s )
       end
 
-      # read in existing config values, attaching
-      # them to instance variables.
       val = Weechat.config_get_plugin( option.to_s )
-      # val.extend( Truthy )
       instance_variable_set( "@#{option}".to_sym, val )
       self.class.send( :attr, option.to_sym, true )
     end
@@ -52,7 +59,6 @@ class TTS
 
   # Play message using mpg123
   def play(message)
-
     `which mpg123`
     if $?.to_i != 0
       print_err "mpg123 executable NOT found. This function only work with POSIX systems.\n Install mpg123 with `brew install mpg123` or `apt-get install mpg123`"
@@ -75,11 +81,11 @@ class TTS
 
   def read( data, buffer, date, tags, visible, highlight, prefix, message )
     # Grab the channel metadata.
-	data = {}
-	%w[ away type channel server ].each do |meta|
+    data = {}
+    %w[ away type channel server ].each do |meta|
       data[ meta.to_sym ] = Weechat.buffer_get_string( buffer, "localvar_#{meta}" );
-	end
-	data[ :away ] = data[ :away ].empty? ? false : true
+    end
+    data[ :away ] = data[ :away ].empty? ? false : true
 
     tags = tags.split( ',' )
 
@@ -87,7 +93,7 @@ class TTS
     return WEECHAT_RC_OK unless self.channels.include?(data[ :channel ])
 
     # Return if message isn't tagged as a "private message"
-	return WEECHAT_RC_OK unless tags.include?("irc_privmsg")
+    return WEECHAT_RC_OK unless tags.include?("irc_privmsg")
 
     # Return if message is from one of the ignored nicks
     self.ignore_nicks.each do |nick|
@@ -102,7 +108,7 @@ class TTS
 
   rescue => err
     print_err err
-	return WEECHAT_RC_OK
+    return WEECHAT_RC_OK
   end
 
   def print_info(message)
@@ -125,7 +131,7 @@ def weechat_init
   require 'rubygems'
   require "google/cloud/text_to_speech"
 
-  Weechat.register("tts", "_rubik", "0.1", "GPL3", "Text to speech with Google API", "", "")
+  Weechat::register *TTS::SIGNATURE
 
   keyfile = "/home/wgriggs/Downloads/irc-2-speach-d3ac5cd6b8ca.json"
 
