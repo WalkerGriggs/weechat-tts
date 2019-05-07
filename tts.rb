@@ -95,11 +95,10 @@ class TTS
     # Return if message isn't tagged as a "private message"
     return WEECHAT_RC_OK unless tags.include?("irc_privmsg")
 
-    # Return if message is from one of the ignored nicks
-    self.ignore_nicks.each do |nick|
-      return WEECHAT_RC_OK if tags.include?("nick_" + nick)
-    end
+    # Return if the message is sent from one of the ignored nicks
+    return WEECHAT_RC_OK if self.ignore_nicks.include?(tags.find{ |e| /^nick_/=~e }[5..])
 
+    # Sanitize and format the message
     message = sanitize(message)
 
     play(message)
