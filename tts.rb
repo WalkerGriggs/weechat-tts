@@ -15,8 +15,9 @@ class TTS
 
   DEFAULT_OPTIONS = {
     :channels       => nil,
-    :ignore_nicks   => ['weechat'],
-    :ignore_tags    => 'irc_quit',
+    :allowed_tags   => "irc_privmsg",
+    :ignore_nicks   => "weechat",
+    :mute           => "off",
   }
 
   def initialize(keyfile)
@@ -69,13 +70,16 @@ class TTS
     self.to_file(message, filename)
 
     pid = fork do
-      `mpg123 -q #{filename}`
+      `mpg123 -q #{filename} && rm #{filename}`
     end
   end
 
   # Remove unwanted URLs from message
   def sanitize( message )
     urls = URI.extract(message)
+
+    return message if urls.length.zero?
+
     urls.each do |url|
       host = URI.parse(url).host.downcase
       host = host.start_with?('www.') ? host[4..-1] : host
@@ -86,22 +90,27 @@ class TTS
   end
 
   def read( data, buffer, date, tags, visible, highlight, prefix, message )
+
+    # Return immediately if muted
+    return WEECHAT_RC_OK if Weechat.config_get_plugin('mute') == "on"
+
     # Grab the channel metadata.
     data = {}
     %w[ away type channel server ].each do |meta|
       data[ meta.to_sym ] = Weechat.buffer_get_string( buffer, "localvar_#{meta}" );
     end
 
-    tags = tags.split( ',' )
+    # Return if message type isn't allowed
+    tags    = tags.split( ',' )
+    allowed = self.allowed_tags.split( ',' )
+    return WEECHAT_RC_OK if (tags & allowed).empty?
 
-    data[ :away ] = data[ :away ].empty? ? false : true
-    data[ :nick ] = tags.find{ |e| /^nick_/=~e }[5..] # eg."nick_foo" => foo
+    # Grab the nick if it's tagged, otherwise 'anon'.
+    nick = tags.find{ |e| /^nick_/=~e }
+    data[ :nick ] = !nick.nil? ? nick[5..] : "anon"
 
     # Return if message isn't from configured channels
     return WEECHAT_RC_OK unless self.channels.include?(data[ :channel ])
-
-    # Return if message isn't tagged as a "private message"
-    return WEECHAT_RC_OK unless tags.include?("irc_privmsg")
 
     # Return if the message is sent from one of the ignored nicks
     return WEECHAT_RC_OK if self.ignore_nicks.include?(data[ :nick ])
@@ -110,13 +119,20 @@ class TTS
     message = sanitize(message)
     message.prepend("#{data[ :nick ]} says, ")
 
+    # Fork mpg123 into new process and play mp3 file
     play(message)
 
-	return WEECHAT_RC_OK
+    return WEECHAT_RC_OK
 
   rescue => err
     print_err err
     return WEECHAT_RC_OK
+  end
+
+  def toggle_mute(data, buffer, args)
+    bool = Weechat.config_get_plugin('mute') == 'on' ? 'off' : 'on'
+    Weechat.config_set_plugin( 'mute', bool )
+    print_info "tts mute toggled #{bool}"
   end
 
   def print_info(message)
@@ -146,6 +162,7 @@ def weechat_init
 
   $tts = TTS.new keyfile
   Weechat.hook_print( '', '', '', 1, 'read', '' )
+  Weechat.hook_command('tts-toggle-mute', 'mute/unmute tts', '', '', '', 'toggle_mute', '' )
 
   return Weechat::WEECHAT_RC_OK
 rescue => err
@@ -160,4 +177,4 @@ end
 
 require 'forwardable'
 extend Forwardable
-def_delegators :$tts, :read
+def_delegators :$tts, :read, :toggle_mute
