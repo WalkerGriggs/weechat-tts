@@ -75,8 +75,14 @@ class TTS
 
   # Remove unwanted URLs from message
   def sanitize( message )
-    rgx = /(http|ftp|https):\/\/([\w_-]+(?:(?:\.[\w_-]+)+))([\w\S]*[\w@?^=%&\/~+#-])?/
-    message.sub rgx, ''
+    urls = URI.extract(message)
+    urls.each do |url|
+      host = URI.parse(url).host.downcase
+      host = host.start_with?('www.') ? host[4..-1] : host
+      message = message.gsub(url, host)
+    end
+
+    return message
   end
 
   def read( data, buffer, date, tags, visible, highlight, prefix, message )
@@ -85,9 +91,11 @@ class TTS
     %w[ away type channel server ].each do |meta|
       data[ meta.to_sym ] = Weechat.buffer_get_string( buffer, "localvar_#{meta}" );
     end
-    data[ :away ] = data[ :away ].empty? ? false : true
 
     tags = tags.split( ',' )
+
+    data[ :away ] = data[ :away ].empty? ? false : true
+    data[ :nick ] = tags.find{ |e| /^nick_/=~e }[5..] # eg."nick_foo" => foo
 
     # Return if message isn't from configured channels
     return WEECHAT_RC_OK unless self.channels.include?(data[ :channel ])
@@ -96,10 +104,11 @@ class TTS
     return WEECHAT_RC_OK unless tags.include?("irc_privmsg")
 
     # Return if the message is sent from one of the ignored nicks
-    return WEECHAT_RC_OK if self.ignore_nicks.include?(tags.find{ |e| /^nick_/=~e }[5..])
+    return WEECHAT_RC_OK if self.ignore_nicks.include?(data[ :nick ])
 
     # Sanitize and format the message
     message = sanitize(message)
+    message.prepend("#{data[ :nick ]} says, ")
 
     play(message)
 
@@ -128,7 +137,8 @@ end
 
 def weechat_init
   require 'rubygems'
-  require "google/cloud/text_to_speech"
+  require 'google/cloud/text_to_speech'
+  require 'uri'
 
   Weechat::register *TTS::SIGNATURE
 
