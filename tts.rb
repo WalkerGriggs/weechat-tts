@@ -18,9 +18,11 @@ class TTS
     :allowed_tags   => "irc_privmsg",
     :ignore_nicks   => "weechat",
     :mute           => "off",
+    :mp3_path       => "/tmp/",
+    :keyfile        => nil,
   }
 
-  def initialize(keyfile)
+  def initialize()
     DEFAULT_OPTIONS.each_pair do |option, value|
       # install default options if needed.
       if Weechat.config_is_set_plugin( option.to_s ).zero?
@@ -33,11 +35,11 @@ class TTS
       self.class.send( :attr, option.to_sym, true )
     end
 
-    authenticate(keyfile)
+    authenticate
   end
 
-  def authenticate(keyfile)
-    @client = Google::Cloud::TextToSpeech.new credentials: keyfile
+  def authenticate()
+    @client = Google::Cloud::TextToSpeech.new credentials: self.keyfile
   end
 
   # Use Google API to synthesize speech from given messege
@@ -62,11 +64,11 @@ class TTS
   def play(message)
     `which mpg123`
     if $?.to_i != 0
-      print_err "mpg123 executable NOT found. This function only work with POSIX systems.\n Install mpg123 with `brew install mpg123` or `apt-get install mpg123`"
+      print_err "mpg123 executable not found in $PATH."
       exit 1
     end
 
-    filename = "/home/wgriggs/Documents/irc2speech/" + SecureRandom.hex + ".mp3"
+    filename = self.mp3_path + SecureRandom.hex + ".mp3"
     self.to_file(message, filename)
 
     pid = fork do
@@ -81,7 +83,9 @@ class TTS
     return message if urls.length.zero?
 
     urls.each do |url|
-      host = URI.parse(url).host.downcase
+      next if URI.parse(url).class != URI::HTTP # Ignore URI::General etc
+
+      host = URI.parse(url).host
       host = host.start_with?('www.') ? host[4..-1] : host
       message = message.gsub(url, host)
     end
@@ -106,14 +110,13 @@ class TTS
     return WEECHAT_RC_OK if (tags & allowed).empty?
 
     # Grab the nick if it's tagged, otherwise 'anon'.
+    # Return if the message is sent from one of the ignored nicks
     nick = tags.find{ |e| /^nick_/=~e }
     data[ :nick ] = !nick.nil? ? nick[5..] : "anon"
+    return WEECHAT_RC_OK if self.ignore_nicks.include?(data[ :nick ])
 
     # Return if message isn't from configured channels
     return WEECHAT_RC_OK unless self.channels.include?(data[ :channel ])
-
-    # Return if the message is sent from one of the ignored nicks
-    return WEECHAT_RC_OK if self.ignore_nicks.include?(data[ :nick ])
 
     # Sanitize and format the message
     message = sanitize(message)
@@ -154,13 +157,10 @@ end
 def weechat_init
   require 'rubygems'
   require 'google/cloud/text_to_speech'
-  require 'uri'
 
   Weechat::register *TTS::SIGNATURE
 
-  keyfile = "/home/wgriggs/Downloads/irc-2-speach-d3ac5cd6b8ca.json"
-
-  $tts = TTS.new keyfile
+  $tts = TTS.new
   Weechat.hook_print( '', '', '', 1, 'read', '' )
   Weechat.hook_command('tts-toggle-mute', 'mute/unmute tts', '', '', '', 'toggle_mute', '' )
 
@@ -171,7 +171,6 @@ rescue => err
     err.message
   ]
 
-  Weechat.print '', 'tts_notify: Unable to initialize due to missing dependencies.'
   return Weechat::WEECHAT_RC_ERROR
 end
 
