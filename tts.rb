@@ -1,3 +1,67 @@
+# Walker Griggs
+# walker@walkergriggs.com
+# 
+# TTS
+# ---
+#                                                                               .
+# Run incoming messages through Google's text-to-speech api and play the resulting
+# soundclip with mpg123. Plugin scaffolding inspired from Mahlon E. Smith's
+# amqp_notify plugin.
+#
+#     https://weechat.org/scripts/source/amqp_notify.rb.html/
+#
+# The user is expected to provide their own keyfile for a GCP service account and
+# will incur any associated charges.
+#
+#     https://cloud.google.com/docs/authentication
+#     https://cloud.google.com/text-to-speech/pricing
+#
+# Installing
+# ----------
+#
+# TTS requires Google's "google-cloud-text_to_speech" gem. Place this script into
+# your ~/.weechat/ruby directory and load the script.
+#     
+#     /ruby load tts.rb
+#
+# Alternatively, you could load the script directly
+#
+#     /script load PATH/TO/TTS.RB
+#
+# Options
+# -------
+#
+# plugins.var.ruby.tts.keyfile
+#
+#     The path to the Google service account keyfile.
+#     Defaults to an empty string.
+#
+# plugins.var.ruby.tts.channels
+#
+#     A comma separated list of channels (with prepended hash or hashes)
+#     Defaults to an empty string.
+#
+# plugins.var.ruby.tts.allowed_tags
+#
+#     A comma separated list of allowed tags for messages to read aloud. All other
+#     messages will be ignored.
+#     Defaults to 'irc_privmsg'
+#
+# plugins.var.ruby.tts.ignored_nicks
+#
+#     A comma seperated list of nicks to ignore.
+#     Defaults to 'weechat'
+#
+# plugins.var.ruby.tts.mute
+#
+#     A global on/off toggle.
+#     Defaults to 'off'
+#
+# plugins.var.ruby.tts.mp3_path
+#
+#     A temporary path to place MP3 files while they're being read before getting deleted.
+#     Defaults to '/tmp/'
+
 class TTS
   include Weechat
 
@@ -14,17 +78,16 @@ class TTS
   ]
 
   DEFAULT_OPTIONS = {
-    :channels       => nil,
+    :channels       => '',
     :allowed_tags   => "irc_privmsg",
     :ignore_nicks   => "weechat",
     :mute           => "off",
     :mp3_path       => "/tmp/",
-    :keyfile        => nil,
+    :keyfile        => '',
   }
 
   def initialize()
     DEFAULT_OPTIONS.each_pair do |option, value|
-      # install default options if needed.
       if Weechat.config_is_set_plugin( option.to_s ).zero?
         self.print_info "Setting value '%s' to %p" % [ option, value ]
         Weechat.config_set_plugin( option.to_s, value.to_s )
@@ -38,6 +101,7 @@ class TTS
     authenticate
   end
 
+  # Create new client using given keyfile
   def authenticate()
     @client = Google::Cloud::TextToSpeech.new credentials: self.keyfile
   end
@@ -71,6 +135,9 @@ class TTS
     filename = self.mp3_path + SecureRandom.hex + ".mp3"
     self.to_file(message, filename)
 
+    # Fork off the mpg process and delete MP3 on successful exit
+    # TODO: Pipe message over to external process so forked processes are synchronous
+    #       without blocking Weechat processes.
     pid = fork do
       `mpg123 -q #{filename} && rm #{filename}`
     end
@@ -80,6 +147,7 @@ class TTS
   def sanitize( message )
     urls = URI.extract(message)
 
+    # Return early no URLs are foudnd.
     return message if urls.length.zero?
 
     urls.each do |url|
@@ -90,9 +158,10 @@ class TTS
       message = message.gsub(url, host)
     end
 
-    return message
+    message
   end
 
+  # Filter out messages and format, synthesize, and read the rest.
   def read( data, buffer, date, tags, visible, highlight, prefix, message )
 
     # Return immediately if muted
@@ -125,19 +194,21 @@ class TTS
     # Fork mpg123 into new process and play mp3 file
     play(message)
 
-    return WEECHAT_RC_OK
+    WEECHAT_RC_OK
 
   rescue => err
     print_err err
-    return WEECHAT_RC_OK
+    WEECHAT_RC_OK
   end
 
+  # Flip the global on/off mute switch.
   def toggle_mute(data, buffer, args)
     bool = Weechat.config_get_plugin('mute') == 'on' ? 'off' : 'on'
     Weechat.config_set_plugin( 'mute', bool )
     print_info "tts mute toggled #{bool}"
   end
 
+  # Print out given message
   def print_info(message)
     Weechat.print '', "%sTTS\t%s" % [
       Weechat.color('yellow'),
@@ -145,6 +216,7 @@ class TTS
     ]
   end
 
+  # Print out given error
   def print_err(err)
     Weechat.print '', "%sTTS\t%s - %s" % [
       Weechat.color('red'),
@@ -164,16 +236,46 @@ def weechat_init
   Weechat.hook_print( '', '', '', 1, 'read', '' )
   Weechat.hook_command('tts-toggle-mute', 'mute/unmute tts', '', '', '', 'toggle_mute', '' )
 
-  return Weechat::WEECHAT_RC_OK
+  Weechat::WEECHAT_RC_OK
 rescue => err
   Weechat.print '', "tts_notify: %s, %p" % [
     err.class.name,
     err.message
   ]
-
-  return Weechat::WEECHAT_RC_ERROR
+  
+  Weechat::WEECHAT_RC_ERROR
 end
 
 require 'forwardable'
 extend Forwardable
 def_delegators :$tts, :read, :toggle_mute
+
+__END__
+__LICENSE__
+
+Copyright (c) 2019, Walker Griggs <walker@walkergriggs.com>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of the author nor the
+      names of its contributors may be used to endorse or promote products
+      derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE., WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
